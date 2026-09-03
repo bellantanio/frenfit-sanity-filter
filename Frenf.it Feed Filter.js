@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Frenf.it Feed Filter
 // @namespace    http://tampermonkey.net/
-// @version      1.6
-// @description  Block users/keywords, draggable icon, scramble blocked comments, auto-apply toggle, double-click toggle
+// @version      1.8
+// @description  Block users/rooms/keywords, wildcards for users/rooms, draggable icon, export/import
 // @match        *://*.frenf.it/*
 // @grant        none
 // ==/UserScript==
@@ -17,6 +17,7 @@
     if (filterEnabled === null) filterEnabled = true; // Default to true if not set
 
     let blockedUsers = JSON.parse(localStorage.getItem('frenfBlockedUsers')) || [];
+    let blockedRooms = JSON.parse(localStorage.getItem('frenfBlockedRooms')) || [];
     let blockedKeywords = JSON.parse(localStorage.getItem('frenfBlockedKeywords')) || [];
 
     // Load saved icon position
@@ -42,7 +43,7 @@
 
     // Update icon color based on active and enabled filters
     function updateIconState() {
-        if (filterEnabled && (blockedUsers.length > 0 || blockedKeywords.length > 0)) {
+        if (filterEnabled && (blockedUsers.length > 0 || blockedRooms.length > 0 || blockedKeywords.length > 0)) {
             filterIcon.style.color = 'red';
             filterIcon.style.opacity = '0.8'; // slightly more visible when active
         } else {
@@ -78,13 +79,21 @@
             Enable Filters
         </label>
 
-        <label style="font-size:12px; margin-bottom:5px;">Blocked Users (one per line, e.g., @sba)</label>
-        <textarea id="blockedUsersInput" rows="5" style="width:100%; margin-bottom:15px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedUsers.map(u => '@' + u).join('\n')}</textarea>
+        <label style="font-size:12px; margin-bottom:5px;">Blocked Users (* and ? wildcards supported)</label>
+        <textarea id="blockedUsersInput" rows="3" style="width:100%; margin-bottom:10px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedUsers.map(u => (u.includes('*') || u.includes('?')) ? u : '@' + u).join('\n')}</textarea>
 
-        <label style="font-size:12px; margin-bottom:5px;">Blocked Keywords in Posts (one per line)</label>
-        <textarea id="blockedKeywordsInput" rows="5" style="width:100%; margin-bottom:15px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedKeywords.join('\n')}</textarea>
+        <label style="font-size:12px; margin-bottom:5px;">Blocked Rooms (* and ? wildcards supported)</label>
+        <textarea id="blockedRoomsInput" rows="3" style="width:100%; margin-bottom:10px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedRooms.join('\n')}</textarea>
 
-        <button id="saveFiltersBtn" style="background-color:#5cb85c; color:white; border:none; padding:8px; border-radius:4px; cursor:pointer; font-weight:bold;">Save & Apply</button>
+        <label style="font-size:12px; margin-bottom:5px;">Blocked Keywords in Posts (NO wildcards)</label>
+        <textarea id="blockedKeywordsInput" rows="3" style="width:100%; margin-bottom:15px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedKeywords.join('\n')}</textarea>
+
+        <button id="saveFiltersBtn" style="background-color:#5cb85c; color:white; border:none; padding:8px; border-radius:4px; cursor:pointer; font-weight:bold; margin-bottom: 10px;">Save & Apply</button>
+        
+        <div style="display: flex; gap: 10px;">
+            <button id="exportFiltersBtn" style="background-color:#0275d8; color:white; border:none; padding:6px; border-radius:4px; cursor:pointer; flex: 1; font-size: 12px; font-weight:bold;">Export</button>
+            <button id="importFiltersBtn" style="background-color:#f0ad4e; color:white; border:none; padding:6px; border-radius:4px; cursor:pointer; flex: 1; font-size: 12px; font-weight:bold;">Import</button>
+        </div>
     `;
 
     document.body.appendChild(filterIcon);
@@ -97,16 +106,17 @@
         }
     };
     document.getElementById('blockedUsersInput').addEventListener('keydown', preventGlobalSubmit);
+    document.getElementById('blockedRoomsInput').addEventListener('keydown', preventGlobalSubmit);
     document.getElementById('blockedKeywordsInput').addEventListener('keydown', preventGlobalSubmit);
 
     // --- Immediate Toggle Logic for Checkbox ---
     document.getElementById('filterEnableCheckbox').addEventListener('change', (e) => {
         filterEnabled = e.target.checked;
         localStorage.setItem('frenfFilterEnabled', JSON.stringify(filterEnabled));
-
+        
         updateIconState();
         resetFilters();
-
+        
         if (filterEnabled) {
             applyFilters();
         }
@@ -161,7 +171,7 @@
     // Single Click: Open Settings (delayed slightly to wait for a double-click)
     filterIcon.addEventListener('click', () => {
         if (isDragging) return;
-
+        
         clearTimeout(clickTimeout);
         clickTimeout = setTimeout(() => {
             configBox.style.display = configBox.style.display === 'none' ? 'flex' : 'none';
@@ -171,14 +181,14 @@
     // Double Click: Instantly Toggle Filters
     filterIcon.addEventListener('dblclick', () => {
         clearTimeout(clickTimeout); // Cancel the single-click menu toggle
-
+        
         filterEnabled = !filterEnabled; // Toggle state
         document.getElementById('filterEnableCheckbox').checked = filterEnabled; // Sync checkbox UI
         localStorage.setItem('frenfFilterEnabled', JSON.stringify(filterEnabled)); // Save
-
+        
         updateIconState();
         resetFilters();
-
+        
         if (filterEnabled) {
             applyFilters();
         }
@@ -188,10 +198,15 @@
     document.getElementById('saveFiltersBtn').addEventListener('click', () => {
         filterEnabled = document.getElementById('filterEnableCheckbox').checked;
         const usersInput = document.getElementById('blockedUsersInput').value;
+        const roomsInput = document.getElementById('blockedRoomsInput').value;
         const keywordsInput = document.getElementById('blockedKeywordsInput').value;
 
         blockedUsers = usersInput.split(/\r?\n/)
             .map(s => s.trim().replace(/^@/, '').toLowerCase())
+            .filter(s => s.length > 0);
+            
+        blockedRooms = roomsInput.split(/\r?\n/)
+            .map(s => s.trim().replace(/^[@\/]/, '').toLowerCase()) // handle trailing slashes just in case
             .filter(s => s.length > 0);
 
         blockedKeywords = keywordsInput.split(/\r?\n/)
@@ -200,24 +215,93 @@
 
         localStorage.setItem('frenfFilterEnabled', JSON.stringify(filterEnabled));
         localStorage.setItem('frenfBlockedUsers', JSON.stringify(blockedUsers));
+        localStorage.setItem('frenfBlockedRooms', JSON.stringify(blockedRooms));
         localStorage.setItem('frenfBlockedKeywords', JSON.stringify(blockedKeywords));
 
         configBox.style.display = 'none';
         updateIconState();
 
-        // Always reset everything to default state before applying new logic
         resetFilters();
-
         if (filterEnabled) {
             applyFilters();
         }
     });
 
-    // --- Filtering Logic ---
+    // --- Export Settings Logic ---
+    document.getElementById('exportFiltersBtn').addEventListener('click', () => {
+        const exportData = {
+            filterEnabled: filterEnabled,
+            blockedUsers: blockedUsers,
+            blockedRooms: blockedRooms,
+            blockedKeywords: blockedKeywords,
+            iconPos: iconPos
+        };
+        
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "frenfit_filters.json");
+        document.body.appendChild(downloadAnchorNode); // required for firefox
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+    });
+
+    // --- Import Settings Logic ---
+    document.getElementById('importFiltersBtn').addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json';
+        
+        input.onchange = e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = event => {
+                try {
+                    const imported = JSON.parse(event.target.result);
+                    
+                    if (imported.blockedUsers) {
+                        document.getElementById('blockedUsersInput').value = imported.blockedUsers.map(u => (u.includes('*') || u.includes('?')) ? u : '@' + u).join('\n');
+                    }
+                    if (imported.blockedRooms) {
+                        document.getElementById('blockedRoomsInput').value = imported.blockedRooms.join('\n');
+                    }
+                    if (imported.blockedKeywords) {
+                        document.getElementById('blockedKeywordsInput').value = imported.blockedKeywords.join('\n');
+                    }
+                    if (typeof imported.filterEnabled === 'boolean') {
+                        document.getElementById('filterEnableCheckbox').checked = imported.filterEnabled;
+                    }
+                    
+                    alert("Settings imported successfully! Click 'Save & Apply' to confirm your changes.");
+                } catch (err) {
+                    alert("Error: Invalid settings file.");
+                }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    });
+
+    // --- Helper Functions ---
     function getHandleFromLink(linkElement) {
         if (!linkElement || !linkElement.href) return "";
         const parts = linkElement.href.split('/');
         return parts[parts.length - 1].toLowerCase();
+    }
+    
+    // Check if handle matches a pattern string (supporting * and ?)
+    function isMatch(handle, list) {
+        if (!handle) return false;
+        return list.some(pattern => {
+            if (pattern.includes('*') || pattern.includes('?')) {
+                // Escape characters regex uses naturally, except * and ?
+                let regexPattern = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+                return new RegExp('^' + regexPattern + '$', 'i').test(handle);
+            }
+            return handle === pattern; // Exact match fallback
+        });
     }
 
     // Function to completely restore the DOM back to its original state
@@ -296,22 +380,37 @@
 
     function applyFilters() {
         if (!filterEnabled) return;
-        if (blockedUsers.length === 0 && blockedKeywords.length === 0) return;
+        if (blockedUsers.length === 0 && blockedRooms.length === 0 && blockedKeywords.length === 0) return;
 
         // 1. Filter Main Posts (.entry) - Still hidden entirely
         const entries = document.querySelectorAll('.entry');
         entries.forEach(entry => {
-            const authorLink = entry.querySelector('.entry-body.public strong.media-heading a.user');
-            const handle = getHandleFromLink(authorLink);
+            // Target the specific user anchor to grab author
+            const authorLink = entry.querySelector('.entry-body.public strong.media-heading a.user') || entry.querySelector('.media-heading a.user');
+            const authorHandle = getHandleFromLink(authorLink);
+            
+            // Get all other room anchors (a.user inside .entry-body that are not the author in strong)
+            const roomLinks = entry.querySelectorAll('.entry-body a.user:not(strong.media-heading a.user)');
+            const roomHandles = Array.from(roomLinks).map(getHandleFromLink);
+
             const textElement = entry.querySelector('.entry-text');
             const postText = textElement ? textElement.innerText.toLowerCase() : "";
 
             let shouldBlock = false;
 
-            if (blockedUsers.includes(handle)) {
+            // Check if Author is blocked (with wildcards)
+            if (isMatch(authorHandle, blockedUsers)) {
                 shouldBlock = true;
             }
 
+            // Check if any listed Room is blocked (with wildcards)
+            if (!shouldBlock && blockedRooms.length > 0) {
+                if (roomHandles.some(room => isMatch(room, blockedRooms))) {
+                    shouldBlock = true;
+                }
+            }
+
+            // Check Keywords (exact match within text, NO wildcards)
             if (!shouldBlock && blockedKeywords.length > 0) {
                 for (let keyword of blockedKeywords) {
                     if (postText.includes(keyword)) {
@@ -330,9 +429,10 @@
         const comments = document.querySelectorAll('.comment-body');
         comments.forEach(comment => {
             const authorLink = comment.querySelector('.commentLinks a.user');
-            const handle = getHandleFromLink(authorLink);
+            const authorHandle = getHandleFromLink(authorLink);
 
-            if (blockedUsers.includes(handle)) {
+            // Comments typically don't have multiple rooms, so just check author here
+            if (isMatch(authorHandle, blockedUsers)) {
                 scrambleComment(comment);
             }
         });
