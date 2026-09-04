@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Frenf.it Feed Filter
 // @namespace    http://tampermonkey.net/
-// @version      1.8
-// @description  Block users/rooms/keywords, wildcards for users/rooms, draggable icon, export/import
+// @version      1.10
+// @description  Block users/rooms/keywords, custom action for comments (Scramble/ROT13/Hide) with username obfuscation, wildcards, export/import
 // @match        *://*.frenf.it/*
 // @grant        none
 // ==/UserScript==
@@ -19,6 +19,7 @@
     let blockedUsers = JSON.parse(localStorage.getItem('frenfBlockedUsers')) || [];
     let blockedRooms = JSON.parse(localStorage.getItem('frenfBlockedRooms')) || [];
     let blockedKeywords = JSON.parse(localStorage.getItem('frenfBlockedKeywords')) || [];
+    let commentAction = localStorage.getItem('frenfCommentAction') || 'scramble'; // 'scramble', 'rot13', 'hide'
 
     // Load saved icon position
     let iconPos = JSON.parse(localStorage.getItem('frenfFilterIconPos')) || { bottom: '20px', right: '20px', top: 'auto', left: 'auto' };
@@ -80,13 +81,20 @@
         </label>
 
         <label style="font-size:12px; margin-bottom:5px;">Blocked Users (* and ? wildcards supported)</label>
-        <textarea id="blockedUsersInput" rows="3" style="width:100%; margin-bottom:10px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedUsers.map(u => (u.includes('*') || u.includes('?')) ? u : '@' + u).join('\n')}</textarea>
+        <textarea id="blockedUsersInput" rows="2" style="width:100%; margin-bottom:10px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedUsers.map(u => (u.includes('*') || u.includes('?')) ? u : '@' + u).join('\n')}</textarea>
 
         <label style="font-size:12px; margin-bottom:5px;">Blocked Rooms (* and ? wildcards supported)</label>
-        <textarea id="blockedRoomsInput" rows="3" style="width:100%; margin-bottom:10px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedRooms.join('\n')}</textarea>
+        <textarea id="blockedRoomsInput" rows="2" style="width:100%; margin-bottom:10px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedRooms.join('\n')}</textarea>
 
         <label style="font-size:12px; margin-bottom:5px;">Blocked Keywords in Posts (NO wildcards)</label>
-        <textarea id="blockedKeywordsInput" rows="3" style="width:100%; margin-bottom:15px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedKeywords.join('\n')}</textarea>
+        <textarea id="blockedKeywordsInput" rows="2" style="width:100%; margin-bottom:10px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">${blockedKeywords.join('\n')}</textarea>
+
+        <label style="font-size:12px; margin-bottom:5px;">Action on Blocked Comments</label>
+        <select id="commentActionSelect" style="width:100%; margin-bottom:15px; box-sizing:border-box; border-radius:4px; border:1px solid #ccc; padding:5px;">
+            <option value="scramble" ${commentAction === 'scramble' ? 'selected' : ''}>Scramble</option>
+            <option value="rot13" ${commentAction === 'rot13' ? 'selected' : ''}>ROT13</option>
+            <option value="hide" ${commentAction === 'hide' ? 'selected' : ''}>Hide completely</option>
+        </select>
 
         <button id="saveFiltersBtn" style="background-color:#5cb85c; color:white; border:none; padding:8px; border-radius:4px; cursor:pointer; font-weight:bold; margin-bottom: 10px;">Save & Apply</button>
         
@@ -200,13 +208,15 @@
         const usersInput = document.getElementById('blockedUsersInput').value;
         const roomsInput = document.getElementById('blockedRoomsInput').value;
         const keywordsInput = document.getElementById('blockedKeywordsInput').value;
+        
+        commentAction = document.getElementById('commentActionSelect').value;
 
         blockedUsers = usersInput.split(/\r?\n/)
             .map(s => s.trim().replace(/^@/, '').toLowerCase())
             .filter(s => s.length > 0);
             
         blockedRooms = roomsInput.split(/\r?\n/)
-            .map(s => s.trim().replace(/^[@\/]/, '').toLowerCase()) // handle trailing slashes just in case
+            .map(s => s.trim().replace(/^[@\/]/, '').toLowerCase())
             .filter(s => s.length > 0);
 
         blockedKeywords = keywordsInput.split(/\r?\n/)
@@ -217,6 +227,7 @@
         localStorage.setItem('frenfBlockedUsers', JSON.stringify(blockedUsers));
         localStorage.setItem('frenfBlockedRooms', JSON.stringify(blockedRooms));
         localStorage.setItem('frenfBlockedKeywords', JSON.stringify(blockedKeywords));
+        localStorage.setItem('frenfCommentAction', commentAction);
 
         configBox.style.display = 'none';
         updateIconState();
@@ -234,6 +245,7 @@
             blockedUsers: blockedUsers,
             blockedRooms: blockedRooms,
             blockedKeywords: blockedKeywords,
+            commentAction: commentAction,
             iconPos: iconPos
         };
         
@@ -270,6 +282,9 @@
                     if (imported.blockedKeywords) {
                         document.getElementById('blockedKeywordsInput').value = imported.blockedKeywords.join('\n');
                     }
+                    if (imported.commentAction) {
+                        document.getElementById('commentActionSelect').value = imported.commentAction;
+                    }
                     if (typeof imported.filterEnabled === 'boolean') {
                         document.getElementById('filterEnableCheckbox').checked = imported.filterEnabled;
                     }
@@ -304,42 +319,80 @@
         });
     }
 
+    // Perform ROT13 cipher on a string
+    function rot13(str) {
+        return str.replace(/[a-zA-Z]/g, function(c) {
+            return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
+        });
+    }
+
+    // Scramble text with random symbols, preserving spaces
+    function scrambleText(text) {
+        const chars = '!@#$%^&*()_+-=[]{}|;:,.<>?~';
+        let scrambled = '';
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            if (char.match(/\s/)) {
+                scrambled += char;
+            } else {
+                scrambled += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+        }
+        return scrambled;
+    }
+
     // Function to completely restore the DOM back to its original state
     function resetFilters() {
         // 1. Unhide main posts
         document.querySelectorAll('.entry').forEach(el => el.style.display = '');
 
-        // 2. Restore scrambled comments
-        document.querySelectorAll('.comment-body[data-scrambled="true"]').forEach(comment => {
-            // Restore Author Name
-            const authorLink = comment.querySelector('.commentLinks a.user');
-            if (authorLink && authorLink.dataset.origText) {
-                authorLink.textContent = authorLink.dataset.origText;
-                delete authorLink.dataset.origText;
+        // 2. Restore processed comments
+        document.querySelectorAll('.comment-body[data-processed]').forEach(comment => {
+            const action = comment.dataset.processed;
+
+            if (action === 'hide') {
+                comment.style.display = '';
+            } else {
+                // Restore Author Name
+                const authorLink = comment.querySelector('.commentLinks a.user');
+                if (authorLink && authorLink.dataset.origText) {
+                    authorLink.textContent = authorLink.dataset.origText;
+                    delete authorLink.dataset.origText;
+                }
+
+                // Restore Comment Text
+                comment.querySelectorAll('.frenf-obfuscated-text').forEach(span => {
+                    const textNode = document.createTextNode(span.dataset.origText);
+                    span.parentNode.replaceChild(textNode, span);
+                });
             }
 
-            // Restore Comment Text
-            comment.querySelectorAll('.frenf-scrambled-text').forEach(span => {
-                const textNode = document.createTextNode(span.dataset.origText);
-                span.parentNode.replaceChild(textNode, span);
-            });
-
-            delete comment.dataset.scrambled;
+            delete comment.dataset.processed;
         });
     }
 
-    // Function to scramble a single comment
-    function scrambleComment(comment) {
-        if (comment.dataset.scrambled) return; // Prevent double scrambling
+    // Function to handle a single comment based on user's preference
+    function processComment(comment, action) {
+        if (comment.dataset.processed) return; // Prevent double processing
 
-        // 1. Replace Author Name
-        const authorLink = comment.querySelector('.commentLinks a.user');
-        if (authorLink) {
-            authorLink.dataset.origText = authorLink.textContent;
-            authorLink.textContent = "ON VACATION";
+        if (action === 'hide') {
+            comment.style.display = 'none';
+            comment.dataset.processed = "hide";
+            return;
         }
 
-        // 2. Find all pure text nodes within the comment
+        // 1. Replace Author Name based on action
+        const authorLink = comment.querySelector('.commentLinks a.user');
+        if (authorLink) {
+            authorLink.dataset.origText = authorLink.textContent; // Save original
+            if (action === 'scramble') {
+                authorLink.textContent = scrambleText(authorLink.textContent);
+            } else if (action === 'rot13') {
+                authorLink.textContent = rot13(authorLink.textContent);
+            }
+        }
+
+        // 2. Find all pure text nodes within the comment body
         const walk = document.createTreeWalker(comment, NodeFilter.SHOW_TEXT, null, false);
         let nodesToReplace = [];
         let n;
@@ -353,43 +406,35 @@
             }
         }
 
-        // 3. Replace text node content with special characters
-        const chars = '!@#$%^&*()_+-=[]{}|;:,.<>?~';
+        // 3. Replace text node content
         nodesToReplace.forEach(node => {
             const span = document.createElement('span');
-            span.className = 'frenf-scrambled-text';
+            span.className = 'frenf-obfuscated-text';
             span.dataset.origText = node.nodeValue; // Save original text
 
-            let scrambled = '';
-            for (let i = 0; i < node.nodeValue.length; i++) {
-                const char = node.nodeValue[i];
-                // Preserve whitespaces and linebreaks to keep the visual shape exactly the same
-                if (char.match(/\s/)) {
-                    scrambled += char;
-                } else {
-                    scrambled += chars.charAt(Math.floor(Math.random() * chars.length));
-                }
+            if (action === 'scramble') {
+                span.textContent = scrambleText(node.nodeValue);
+            } else if (action === 'rot13') {
+                span.textContent = rot13(node.nodeValue);
             }
-            span.textContent = scrambled;
+            
             node.parentNode.replaceChild(span, node);
         });
 
-        // Mark as scrambled so we can find it to undo it later
-        comment.dataset.scrambled = "true";
+        // Mark as processed so we can find it to undo it later
+        comment.dataset.processed = action;
     }
 
     function applyFilters() {
         if (!filterEnabled) return;
         if (blockedUsers.length === 0 && blockedRooms.length === 0 && blockedKeywords.length === 0) return;
 
-        // 1. Filter Main Posts (.entry) - Still hidden entirely
+        // 1. Filter Main Posts (.entry) - ALWAYS hidden entirely
         const entries = document.querySelectorAll('.entry');
         entries.forEach(entry => {
-            // Target the specific user anchor to grab author
             const authorLink = entry.querySelector('.entry-body.public strong.media-heading a.user') || entry.querySelector('.media-heading a.user');
             const authorHandle = getHandleFromLink(authorLink);
             
-            // Get all other room anchors (a.user inside .entry-body that are not the author in strong)
             const roomLinks = entry.querySelectorAll('.entry-body a.user:not(strong.media-heading a.user)');
             const roomHandles = Array.from(roomLinks).map(getHandleFromLink);
 
@@ -398,19 +443,16 @@
 
             let shouldBlock = false;
 
-            // Check if Author is blocked (with wildcards)
             if (isMatch(authorHandle, blockedUsers)) {
                 shouldBlock = true;
             }
 
-            // Check if any listed Room is blocked (with wildcards)
             if (!shouldBlock && blockedRooms.length > 0) {
                 if (roomHandles.some(room => isMatch(room, blockedRooms))) {
                     shouldBlock = true;
                 }
             }
 
-            // Check Keywords (exact match within text, NO wildcards)
             if (!shouldBlock && blockedKeywords.length > 0) {
                 for (let keyword of blockedKeywords) {
                     if (postText.includes(keyword)) {
@@ -425,15 +467,15 @@
             }
         });
 
-        // 2. Filter Single Comments (.comment-body) - Scrambled instead of hidden
+        // 2. Filter Single Comments (.comment-body) - Apply user's selected action
         const comments = document.querySelectorAll('.comment-body');
         comments.forEach(comment => {
             const authorLink = comment.querySelector('.commentLinks a.user');
             const authorHandle = getHandleFromLink(authorLink);
 
-            // Comments typically don't have multiple rooms, so just check author here
+            // Comments are only filtered based on the Blocked Users list
             if (isMatch(authorHandle, blockedUsers)) {
-                scrambleComment(comment);
+                processComment(comment, commentAction);
             }
         });
     }
