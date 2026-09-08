@@ -1,1 +1,1 @@
-frenf.it sanity filter for Tampemonkey
+vibe coded frenf.it sanity filter for Tampemonkey
