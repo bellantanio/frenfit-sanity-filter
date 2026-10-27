@@ -729,6 +729,7 @@
 
   function setColor(hex) {
     theme = buildTheme(hex);
+    syncUiTheme();
     schedule(null);
   }
 
@@ -738,6 +739,7 @@
     release(null);
     info = new WeakMap();
     updatePlaceholder();
+    syncUiTheme();
   }
 
   function initEngine() {
@@ -765,6 +767,29 @@
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+  const ui = { panel: null, header: null, body: null, tabButtons: [] };
+
+  function syncUiTheme() {
+    const panel = ui.panel;
+    if (!panel) return;
+    const bg = theme ? theme.bg1 : [255, 255, 255];
+    const fg = theme ? theme.fg : [31, 41, 55];
+    const border = mix(bg, fg, 0.25);
+    panel.style.background = toHex(bg);
+    panel.style.borderColor = toHex(border);
+    panel.style.color = toHex(fg);
+    if (ui.header) ui.header.style.borderBottomColor = toHex(mix(bg, fg, 0.28));
+    if (ui.body) ui.body.style.background = toHex(bg);
+    ui.tabButtons.forEach((tab) => {
+      const on = tab.getAttribute('aria-selected') === 'true';
+      const tabBg = on ? toHex(fg) : toHex(mix(bg, fg, 0.12));
+      const tabText = on ? toHex(bg) : toHex(fg);
+      const tabBorder = toHex(mix(bg, fg, on ? 0.18 : 0.35));
+      tab.style.background = tabBg;
+      tab.style.color = tabText;
+      tab.style.borderColor = tabBorder;
+    });
+  }
 
   // Inline styles are set through the CSSOM, which content security policies allow.
   function make(tag, style, attrs, children) {
@@ -1081,6 +1106,7 @@
       focusRing(tab);
       return tab;
     });
+    ui.tabButtons = tabButtons;
 
     function selectTab(id) {
       activeTab = id;
@@ -1095,6 +1121,7 @@
       });
       body.scrollTop = 0;
       if (open) clamp(panel, 8);
+      syncUiTheme();
     }
 
     const sizeButton = (text, title, onClick) => {
@@ -1118,9 +1145,11 @@
         sizeButton('+', 'Larger window', () => setScale(configScale + 0.1)),
       ]),
     ]);
+    ui.header = header;
 
     const body = make('div', { flex: '1 1 auto', minHeight: '0', overflowY: 'auto', overflowX: 'hidden', padding: '4px' },
       null, TABS.map((t) => t[2]));
+    ui.body = body;
 
     const panel = make('div', {
       position: 'fixed', zIndex: '2147483647', display: 'none', flexDirection: 'column',
@@ -1129,6 +1158,7 @@
       font: '13px/1.4 ' + FONT, textAlign: 'left', colorScheme: 'light', cursor: 'move',
       transform: 'scale(' + configScale + ')', transformOrigin: 'top right',
     }, { id: 'frenfTk-panel', role: 'dialog', 'aria-label': 'frenf:it toolkit', [UI_ATTR]: '' }, [header, body]);
+    ui.panel = panel;
     Object.assign(panel.style, configPos);
 
     /* ---- gear ---- */
@@ -1320,6 +1350,7 @@
     selectTab(activeTab);
     fitPanel();
     updateIconState();
+    syncUiTheme();
     setTimeout(() => clamp(gear, 2), 100);
   }
 
