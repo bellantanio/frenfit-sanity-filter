@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         frenf:it Toolkit (Feed Filter + Background Picker)
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  One movable, resizable gear panel for frenf:it: feed filters (users, rooms, keywords, post age, comment action) and a page background color picker with automatic text contrast.
 // @match        *://*.frenf.it/*
 // @run-at       document-start
